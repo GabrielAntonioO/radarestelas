@@ -195,13 +195,11 @@
     document.getElementById('status').innerHTML = '<span class="spinner"></span> Actualizando…';
 
     try {
-      const bbox = `${userPos.lat - 1},${userPos.lon - 1},${userPos.lat + 1},${userPos.lon + 1}`;
-      const url = `https://opensky-network.org/api/states/all?lamin=${bbox.split(',')[0]}&lomin=${bbox.split(',')[1]}&lamax=${bbox.split(',')[2]}&lomax=${bbox.split(',')[3]}`;
-      
+      const url = `/api/opensky?lat=${userPos.lat}&lon=${userPos.lon}`;
       const r = await fetch(url);
       const d = await r.json();
 
-      if (!d.states) { 
+      if (!d.states || d.error) { 
         document.getElementById('status').textContent = '⚠️ Sin aviones detectados';
         return;
       }
@@ -251,7 +249,7 @@
     } catch (e) {
       console.error('Error:', e);
       document.getElementById('status').className = 'status error';
-      document.getElementById('status').textContent = '❌ Error al cargar';
+      document.getElementById('status').textContent = '❌ ' + e.message;
     }
   }
 
