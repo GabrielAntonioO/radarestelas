@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar Estelas</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #000;
+      color: #fff;
+    }
+
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+
+    .info-panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid #444;
+      z-index: 1000;
+      max-width: 280px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .info-panel h3 {
+      margin-bottom: 8px;
+      font-size: 15px;
+      color: #4CAF50;
+    }
+
+    .status {
+      margin-bottom: 6px;
+      color: #aaa;
+    }
+
+    .status.updating { color: #4CAF50; }
+    .status.error { color: #ff6b6b; }
+
+    .legend {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #444;
+      z-index: 1000;
+      font-size: 12px;
+    }
+
+    .legend-item {
+      margin: 4px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #444;
+      border-top-color: #4CAF50;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="info-panel">
+  <h3>🛰️ Radar Estelas</h3>
+  <div class="status" id="status">
+    <span class="spinner"></span> Inicializando…
+  </div>
+  <div id="info" style="display:none;">
+    <div>📍 Tu posición: <span id="pos">--</span></div>
+    <div>✈️ Aviones: <span id="count">0</span></div>
+    <div style="margin-top:6px; font-size:11px; color:#888;" id="update-time"></div>
+  </div>
+</div>
+
+<div class="legend">
+  <strong style="display:block; margin-bottom:6px;">Riesgo de Estelas</strong>
+  <div class="legend-item"><div class="legend-color" style="background:#00ff00;"></div> <span>NULA</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#ffff00;"></div> <span>BAJA</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#ff9800;"></div> <span>MEDIA</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#ff5722;"></div> <span>ALTA</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#ff0000;"></div> <span>MUY ALTA</span></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+  const map = L.map('map').setView([42.24, -8.72], 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 13
+  }).addTo(map);
+
+  let userPos = null;
+  let userMarker = null;
+  let aeroMarkers = {};
+  let weatherCache = {};
+
+  const riskColors = {
+    'NULA': '#00ff00',
+    'BAJA': '#ffff00',
+    'MEDIA': '#ff9800',
+    'ALTA': '#ff5722',
+    'MUY ALTA': '#ff0000'
+  };
+
+  function toRHi(RHw, T_C) {
+    const ew = 6.1078 * Math.exp(17.269 * T_C / (T_C + 237.29));
+    const ei = 6.1078 * Math.exp(21.875 * T_C / (T_C + 265.5));
+    return (RHw / 100) * (ew / ei) * 100;
+  }
+
+  function classify(T, RHw) {
+    const RHi = toRHi(RHw, T);
+    if (T > -40) return 'NULA';
+    const ts = T <= -50 ? 3 : T <= -45 ? 2 : 1;
+    const rs = RHi >= 110 ? 4 : RHi >= 100 ? 3 : RHi >= 95 ? 2 : RHi >= 90 ? 1 : 0;
+    const cpi = ts + rs;
+    if (cpi >= 6) return 'MUY ALTA';
+    if (cpi >= 5) return 'ALTA';
+    if (cpi >= 3) return 'MEDIA';
+    if (cpi >= 1) return 'BAJA';
+    return 'NULA';
+  }
+
+  function getClosestLevel(alt_m) {
+    const alt_km = alt_m / 1000;
+    const levels = { 200: 12, 225: 11, 275: 10 };
+    let closest = 200;
+    let minDiff = Math.abs(12 - alt_km);
+    for (const [p, km] of Object.entries(levels)) {
+      const diff = Math.abs(km - alt_km);
+      if (diff < minDiff) { minDiff = diff; closest = p; }
+    }
+    return closest;
+  }
+
+  async function getWeatherForPoint(lat, lon, alt_m) {
+    const cacheKey = `${lat.toFixed(2)}_${lon.toFixed(2)}`;
+    if (weatherCache[cacheKey]) return weatherCache[cacheKey];
+
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_200hPa,temperature_225hPa,temperature_275hPa,relative_humidity_200hPa,relative_humidity_225hPa,relative_humidity_275hPa&timezone=UTC&forecast_days=1`;
+      const r = await fetch(url);
+      const d = await r.json();
+      const h = d.hourly;
+      const now = new Date();
+      const hora = now.getUTCHours();
+
+      const level = getClosestLevel(alt_m);
+      const temp = h[`temperature_${level}hPa`][hora];
+      const rh = h[`relative_humidity_${level}hPa`][hora];
+
+      const result = { temp, rh, level };
+      weatherCache[cacheKey] = result;
+      return result;
+    } catch (e) {
+      console.error('Weather error:', e);
+      return null;
+    }
+  }
+
+  async function updateAirplanes() {
+    if (!userPos) return;
+
+    document.getElementById('status').innerHTML = '<span class="spinner"></span> Actualizando…';
+
+    try {
+      const bbox = `${userPos.lat - 1},${userPos.lon - 1},${userPos.lat + 1},${userPos.lon + 1}`;
+      const url = `https://opensky-network.org/api/states/all?lamin=${bbox.split(',')[0]}&lomin=${bbox.split(',')[1]}&lamax=${bbox.split(',')[2]}&lomax=${bbox.split(',')[3]}`;
+      
+      const r = await fetch(url);
+      const d = await r.json();
+
+      if (!d.states) { 
+        document.getElementById('status').textContent = '⚠️ Sin aviones detectados';
+        return;
+      }
+
+      // Limpiar marcadores antiguos
+      Object.values(aeroMarkers).forEach(m => map.removeLayer(m));
+      aeroMarkers = {};
+
+      let count = 0;
+      for (const state of d.states) {
+        const [icao, callsign, origin, time, lat, lon, baroAlt, onGround, vel, trueTrack, vertRate, sensors, geoAlt, squawk, spi, posSource, category] = state;
+
+        if (onGround || !lat || !lon || !baroAlt) continue;
+
+        count++;
+        const weather = await getWeatherForPoint(lat, lon, baroAlt);
+        if (!weather) continue;
+
+        const risk = classify(weather.temp, weather.rh);
+        const color = riskColors[risk];
+        const html = `
+          <div style="font-size:11px; background:#000; color:#fff; padding:6px; border-radius:4px;">
+            <strong>${callsign || icao}</strong><br>
+            Alt: ${(baroAlt/1000).toFixed(1)}km<br>
+            Riesgo: ${risk}<br>
+            T: ${weather.temp.toFixed(0)}°C, RH: ${weather.rh.toFixed(0)}%
+          </div>
+        `;
+
+        const marker = L.circleMarker([lat, lon], {
+          radius: 6,
+          fillColor: color,
+          color: '#fff',
+          weight: 1,
+          opacity: 0.8,
+          fillOpacity: 0.8
+        }).bindPopup(html).addTo(map);
+
+        aeroMarkers[icao] = marker;
+      }
+
+      document.getElementById('count').textContent = count;
+      document.getElementById('status').className = 'status';
+      document.getElementById('status').innerHTML = '✅ Actualizado';
+      document.getElementById('update-time').textContent = `Última actualización: ${new Date().toLocaleTimeString('es')}`;
+
+    } catch (e) {
+      console.error('Error:', e);
+      document.getElementById('status').className = 'status error';
+      document.getElementById('status').textContent = '❌ Error al cargar';
+    }
+  }
+
+  // Get GPS
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        userPos = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        if (userMarker) map.removeLayer(userMarker);
+        userMarker = L.circleMarker([userPos.lat, userPos.lon], {
+          radius: 8,
+          fillColor: '#4CAF50',
+          color: '#fff',
+          weight: 2,
+          fillOpacity: 0.9
+        }).addTo(map);
+        map.setView([userPos.lat, userPos.lon], 8);
+        document.getElementById('info').style.display = 'block';
+        document.getElementById('pos').textContent = `${userPos.lat.toFixed(2)}, ${userPos.lon.toFixed(2)}`;
+      },
+      () => {
+        document.getElementById('status').textContent = '⚠️ GPS denegado';
+      },
+      { enableHighAccuracy: true }
+    );
+  }
+
+  // Update every 5 seconds
+  updateAirplanes();
+  setInterval(updateAirplanes, 5000);
+</script>
+</body>
+</html>
