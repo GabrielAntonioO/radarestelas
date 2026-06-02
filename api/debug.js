@@ -14,8 +14,6 @@ export default async function handler(req, res) {
     const lomin = parseFloat(lon) - 1.5;
     const lomax = parseFloat(lon) + 1.5;
 
-    console.log(`[DEBUG] Buscando en bbox: lat[${lamin},${lamax}] lon[${lomin},${lomax}]`);
-
     const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
     
     const r = await fetch(url, {
@@ -39,31 +37,19 @@ export default async function handler(req, res) {
     return res.status(200).json({
       timestamp: new Date().toISOString(),
       bbox: { lamin, lomin, lamax, lomax },
-      api_url: url,
       stats: {
         total_states: totalStates,
         in_flight: inFlight,
-        with_altitude: withAltitude,
-        with_position: data.states ? data.states.filter(s => s[4] && s[5]).length : 0
+        with_altitude: withAltitude
       },
       time: data.time,
-      sample_states: data.states ? data.states.slice(0, 5).map(s => ({
-        icao: s[0],
-        callsign: s[1],
-        lat: s[4],
-        lon: s[5],
-        altitude: s[6],
-        on_ground: s[7],
-        velocity: s[8]
-      })) : [],
-      first_10_raw: data.states ? data.states.slice(0, 10) : []
+      sample_states: data.states ? data.states.slice(0, 5) : []
     });
 
   } catch (e) {
     console.error('[DEBUG Error]', e.message);
     return res.status(500).json({ 
-      error: e.message,
-      stack: e.stack 
+      error: e.message
     });
   }
 }
