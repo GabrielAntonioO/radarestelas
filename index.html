@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Radar Estelas - Final</title>
+    <title>Radar Estelas - Definitivo</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
@@ -11,7 +11,6 @@
         body { font-family: 'Segoe UI', sans-serif; background: #111; color: #eee; }
         #map { height: 100vh; width: 100%; z-index: 1; }
         
-        /* Eliminar cualquier cuadrado alrededor de los iconos de avión */
         .plane-icon-no-bg {
             background: transparent !important;
             border: none !important;
@@ -21,7 +20,6 @@
             border: none !important;
         }
         
-        /* Engranaje flotante */
         .gear-btn {
             position: absolute;
             top: 20px;
@@ -44,7 +42,6 @@
         .gear-btn:hover { background: #1e3a2f; }
         .gear-btn.hidden { display: none; }
         
-        /* Botón centrar ubicación */
         .locate-btn {
             position: absolute;
             bottom: 30px;
@@ -66,7 +63,6 @@
         }
         .locate-btn:hover { background: #1e3a2f; }
         
-        /* Panel de control - sin botón X */
         .control-panel {
             position: absolute;
             top: 20px;
@@ -175,6 +171,8 @@
     let currentMapCenter = null;
     let firstLocationFix = true;
     
+    // ✅ CORRECCIÓN DEFINITIVA: 270 grados (equivalente a -90)
+    const ROTATION_FIX = 270;
     const MIN_ALTITUDE_FOR_CONTRAIL = 6000;
     
     function riskToPercent(risk) {
@@ -298,10 +296,10 @@
         } catch (err) { console.error(err); return []; }
     }
     
-    // Icono de avión REAL con FontAwesome - SIN CUADRADO
+    // Icono de avión con corrección definitiva de 270 grados
     function getPlaneIcon(color, heading) {
         const headingDeg = (heading && !isNaN(heading)) ? heading : 0;
-        const corrected = (headingDeg + 180) % 360;
+        const corrected = (headingDeg + ROTATION_FIX) % 360;
         const html = `
             <div style="transform: rotate(${corrected}deg); transform-origin: center center; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: none;">
                 <i class="fas fa-plane" style="font-size: 28px; color: ${color}; text-shadow: 0 0 1px black;"></i>
@@ -450,7 +448,6 @@
         openPanel();
     };
     
-    // Cerrar panel al hacer clic en cualquier lugar de la ventana
     document.addEventListener('click', function(e) {
         const panel = document.getElementById('controlPanel');
         if (panel.classList.contains('visible')) {
