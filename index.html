@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Radar Estelas - Icono avión real</title>
+    <title>Radar Estelas - Avión real</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', sans-serif; background: #111; color: #eee; }
         #map { height: 100vh; width: 100%; z-index: 1; }
-        
         .gear-btn {
             position: absolute;
             top: 20px;
@@ -28,10 +27,7 @@
             border: 1px solid #4ade80;
             font-size: 26px;
             color: #4ade80;
-            transition: 0.2s;
         }
-        .gear-btn:hover { background: #1e3a2f; }
-        
         .locate-btn {
             position: absolute;
             bottom: 30px;
@@ -49,15 +45,12 @@
             border: 1px solid #4ade80;
             font-size: 24px;
             color: #4ade80;
-            transition: 0.2s;
         }
-        .locate-btn:hover { background: #1e3a2f; }
-        
         .control-panel {
             position: absolute;
             top: 20px;
             left: 20px;
-            background: rgba(0, 0, 0, 0.95);
+            background: rgba(0,0,0,0.95);
             backdrop-filter: blur(8px);
             border-radius: 20px;
             padding: 14px 18px;
@@ -65,10 +58,8 @@
             border: 1px solid rgba(255,255,255,0.2);
             min-width: 260px;
             display: none;
-            pointer-events: auto;
         }
         .control-panel.visible { display: block; }
-        
         .panel-header {
             display: flex;
             justify-content: space-between;
@@ -79,9 +70,6 @@
         .panel-header h3 {
             font-size: 1.2rem;
             color: #4ade80;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
         .close-panel {
             background: none;
@@ -90,8 +78,6 @@
             font-size: 20px;
             cursor: pointer;
         }
-        .close-panel:hover { color: white; }
-        
         .info-row {
             display: flex;
             justify-content: space-between;
@@ -100,7 +86,6 @@
         }
         .info-label { color: #aaa; }
         .info-value { font-weight: 600; color: white; }
-        
         .legend {
             display: flex;
             flex-wrap: wrap;
@@ -124,10 +109,8 @@
 </head>
 <body>
 <div id="map"></div>
-
 <div class="gear-btn" id="gearBtn"><i class="fas fa-cog"></i></div>
 <div class="locate-btn" id="locateBtn"><i class="fas fa-crosshairs"></i></div>
-
 <div class="control-panel" id="controlPanel">
     <div class="panel-header">
         <h3><i class="fas fa-plane"></i> Radar Estelas</h3>
@@ -159,284 +142,32 @@
         <div class="legend-item"><div class="legend-color" style="background:#888888;"></div><span>Sin datos</span></div>
     </div>
 </div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-    // ================= CONFIGURACIÓN =================
-    let map;
-    let userLocation = null;
-    let userMarker = null;
-    let aircraftMarkers = new Map();
-    let weatherCache = new Map();
-    let isUpdating = false;
-    let currentMapCenter = null;
-    let firstLocationFix = true;
-    
-    const MIN_ALTITUDE_FOR_CONTRAIL = 6000; // metros (6 km)
-    
-    function getRadiusFromZoom(zoom) {
-        return Math.max(30, Math.min(500, Math.round(400 / (zoom - 3))));
-    }
-    
-    const pressureLevels = [
-        { press: 500, alt_m: 5574 }, { press: 400, alt_m: 7185 }, { press: 300, alt_m: 9164 },
-        { press: 250, alt_m: 10363 }, { press: 200, alt_m: 11784 }, { press: 150, alt_m: 13608 },
-        { press: 100, alt_m: 16184 }, { press: 70, alt_m: 18513 }, { press: 50, alt_m: 20600 }
-    ];
-    const usableLevels = pressureLevels.filter(l => l.press >= 70 && l.press <= 500);
-    
-    const riskColors = {
-        'NULA': '#00ff00', 'BAJA': '#ffff00', 'MEDIA': '#ff9800',
-        'ALTA': '#ff5722', 'MUY ALTA': '#ff0000', 'SIN DATOS': '#888888'
-    };
-    
-    function toRHi(RHw, T_C) {
-        const ew = 6.1078 * Math.exp(17.269 * T_C / (T_C + 237.29));
-        const ei = 6.1078 * Math.exp(21.875 * T_C / (T_C + 265.5));
-        return (RHw / 100) * (ew / ei) * 100;
-    }
-    function classifyRisk(T, RHw) {
-        if (T === null || RHw === null) return 'SIN DATOS';
-        if (T > -40) return 'NULA';
-        const RHi = toRHi(RHw, T);
-        const ts = T <= -50 ? 3 : T <= -45 ? 2 : 1;
-        const rs = RHi >= 110 ? 4 : RHi >= 100 ? 3 : RHi >= 95 ? 2 : RHi >= 90 ? 1 : 0;
-        const cpi = ts + rs;
-        if (cpi >= 6) return 'MUY ALTA';
-        if (cpi >= 5) return 'ALTA';
-        if (cpi >= 3) return 'MEDIA';
-        if (cpi >= 1) return 'BAJA';
-        return 'NULA';
-    }
-    
-    async function fetchAllWeatherData(lat, lon) {
-        const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}`;
-        const now = Date.now();
-        if (weatherCache.has(cacheKey)) {
-            const cached = weatherCache.get(cacheKey);
-            if (now - cached.timestamp < 300000) return cached.data;
-        }
-        try {
-            const tempVars = usableLevels.map(l => `temperature_${l.press}hPa`).join(',');
-            const rhVars = usableLevels.map(l => `relative_humidity_${l.press}hPa`).join(',');
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${tempVars},${rhVars}&timezone=UTC&forecast_days=1`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Weather error: ${response.status}`);
-            const data = await response.json();
-            const horaActual = new Date().getUTCHours();
-            const weatherByPressure = {};
-            for (let level of usableLevels) {
-                const tempArray = data.hourly[`temperature_${level.press}hPa`];
-                const rhArray = data.hourly[`relative_humidity_${level.press}hPa`];
-                weatherByPressure[level.press] = {
-                    temp: tempArray?.[horaActual] ?? null,
-                    rh: rhArray?.[horaActual] ?? null,
-                    alt_m: level.alt_m
-                };
-            }
-            const result = { weatherByPressure, timestamp: now };
-            weatherCache.set(cacheKey, { data: result, timestamp: now });
-            return result;
-        } catch (err) {
-            console.error(err);
-            return null;
-        }
-    }
-    
-    function interpolateWeather(altMeters, weatherData) {
-        if (!weatherData?.weatherByPressure) return null;
-        const levels = Object.entries(weatherData.weatherByPressure).map(([p, i]) => ({ press: parseInt(p), alt_m: i.alt_m, temp: i.temp, rh: i.rh })).sort((a,b) => a.alt_m - b.alt_m);
-        if (levels.length === 0) return null;
-        if (altMeters <= levels[0].alt_m) return levels[0];
-        if (altMeters >= levels[levels.length-1].alt_m) return levels[levels.length-1];
-        for (let i = 0; i < levels.length-1; i++) {
-            const lower = levels[i], upper = levels[i+1];
-            if (altMeters >= lower.alt_m && altMeters <= upper.alt_m) {
-                const ratio = (altMeters - lower.alt_m) / (upper.alt_m - lower.alt_m);
-                const temp = (lower.temp !== null && upper.temp !== null) ? lower.temp + ratio * (upper.temp - lower.temp) : null;
-                const rh = (lower.rh !== null && upper.rh !== null) ? lower.rh + ratio * (upper.rh - lower.rh) : null;
-                return { temp, rh, alt_m: altMeters, press: `interp_${lower.press}-${upper.press}` };
-            }
-        }
-        return null;
-    }
-    
-    async function getRiskForAircraft(lat, lon, altMeters) {
-        const weatherData = await fetchAllWeatherData(lat, lon);
-        if (!weatherData) return { risk: 'SIN DATOS', temp: null, rh: null };
-        const result = interpolateWeather(altMeters, weatherData);
-        if (!result || result.temp === null || result.rh === null) return { risk: 'SIN DATOS', temp: null, rh: null };
-        return { risk: classifyRisk(result.temp, result.rh), temp: result.temp, rh: result.rh };
-    }
-    
-    async function fetchAircraftNearby(lat, lon, radiusKm) {
-        const radiusNm = Math.min(radiusKm * 0.539957, 250);
-        const url = `https://api.airplanes.live/v2/point/${lat}/${lon}/${radiusNm}`;
-        try {
-            const resp = await fetch(url);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (!data?.ac) return [];
-            return data.ac.filter(p => p.lat && p.lon && (p.alt_baro || p.alt_geom));
-        } catch (err) { console.error(err); return []; }
-    }
-    
-    // Icono de avión real con FontAwesome rotado correctamente
-    function getPlaneIcon(color, heading) {
-        const headingDeg = (heading && !isNaN(heading)) ? heading : 0;
-        const html = `
-            <div style="transform: rotate(${headingDeg}deg); transform-origin: center center; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;">
-                <i class="fas fa-plane" style="font-size: 28px; color: ${color}; text-shadow: 0 0 1px black; line-height: 1;"></i>
-            </div>
-        `;
-        return L.divIcon({
-            html: html,
-            iconSize: [32, 32],
-            className: 'plane-icon',
-            popupAnchor: [0, -16]
-        });
-    }
-    
-    async function refreshAircraftAt(lat, lon, zoomLevel) {
-        if (isUpdating) return;
-        const radiusKm = getRadiusFromZoom(zoomLevel);
-        document.getElementById('radioValue').innerHTML = radiusKm + " km";
-        isUpdating = true;
-        try {
-            const aircraftList = await fetchAircraftNearby(lat, lon, radiusKm);
-            const enriched = [];
-            for (const plane of aircraftList) {
-                let altM = plane.alt_baro || plane.alt_geom || 10000;
-                if (plane.alt_baro && plane.alt_baro < 60000 && plane.alt_baro > 0) altM = plane.alt_baro * 0.3048;
-                else if (plane.alt_geom && plane.alt_geom < 20000) altM = plane.alt_geom;
-                
-                // 🛑 Filtro: Solo aviones por encima de 6000 m
-                if (altM < MIN_ALTITUDE_FOR_CONTRAIL) continue;
-                
-                const heading = plane.track || 0;
-                const riskData = await getRiskForAircraft(plane.lat, plane.lon, altM);
-                enriched.push({
-                    id: plane.hex || `${plane.lat}_${plane.lon}`,
-                    lat: plane.lat, lon: plane.lon, altitudeM: altM,
-                    flight: plane.flight || "N/A", heading: heading,
-                    risk: riskData.risk, temp: riskData.temp, rh: riskData.rh
-                });
-            }
-            updateMarkers(enriched);
-            document.getElementById('planeCount').innerText = enriched.length;
-            document.getElementById('updateTime').innerHTML = new Date().toLocaleTimeString('es');
-        } catch (err) { console.error(err); }
-        finally { isUpdating = false; }
-    }
-    
-    function updateMarkers(aircraftList) {
-        const currentIds = new Set(aircraftList.map(a => a.id));
-        for (let [id, obj] of aircraftMarkers.entries()) {
-            if (!currentIds.has(id)) { map.removeLayer(obj.marker); aircraftMarkers.delete(id); }
-        }
-        for (const plane of aircraftList) {
-            const color = riskColors[plane.risk] || riskColors['SIN DATOS'];
-            const icon = getPlaneIcon(color, plane.heading);
-            const popup = `
-                <div style="font-size:12px;">
-                    <b>✈️ ${plane.flight}</b><br>
-                    Altitud: ${Math.round(plane.altitudeM)} m<br>
-                    Temp: ${plane.temp?.toFixed(1) ?? 'N/D'}°C<br>
-                    Riesgo: <span style="color:${color}">${plane.risk}</span>
-                </div>`;
-            if (aircraftMarkers.has(plane.id)) {
-                const existing = aircraftMarkers.get(plane.id);
-                existing.marker.setLatLng([plane.lat, plane.lon]);
-                existing.marker.setIcon(icon);
-                existing.marker.bindPopup(popup);
-            } else {
-                const marker = L.marker([plane.lat, plane.lon], { icon }).bindPopup(popup).addTo(map);
-                aircraftMarkers.set(plane.id, { marker });
-            }
-        }
-    }
-    
-    function initMap() {
-        map = L.map('map', { zoomControl: false }).setView([42.24, -8.72], 8);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-        }).addTo(map);
-        
-        const updateOnMove = async () => {
-            const center = map.getCenter();
-            const zoom = map.getZoom();
-            currentMapCenter = { lat: center.lat, lon: center.lng };
-            await refreshAircraftAt(center.lat, center.lng, zoom);
-        };
-        map.on('moveend', updateOnMove);
-        map.on('zoomend', updateOnMove);
-    }
-    
-    function initGeolocation() {
-        if (!navigator.geolocation) {
-            document.getElementById('posText').innerText = "No soportado";
-            return;
-        }
-        navigator.geolocation.watchPosition(
-            async (pos) => {
-                const { latitude, longitude } = pos.coords;
-                userLocation = { lat: latitude, lon: longitude };
-                document.getElementById('posText').innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
-                if (userMarker) map.removeLayer(userMarker);
-                userMarker = L.circleMarker([latitude, longitude], {
-                    radius: 10,
-                    fillColor: '#3b82f6',
-                    color: '#fff',
-                    weight: 2,
-                    fillOpacity: 0.9
-                }).bindPopup("📍 Tu posición").addTo(map);
-                
-                if (firstLocationFix) {
-                    map.setView([latitude, longitude], 9);
-                    firstLocationFix = false;
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: latitude, lon: longitude };
-                    await refreshAircraftAt(latitude, longitude, zoom);
-                } else if (!currentMapCenter) {
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: latitude, lon: longitude };
-                    await refreshAircraftAt(latitude, longitude, zoom);
-                }
-            },
-            (err) => {
-                document.getElementById('posText').innerText = "Permiso denegado";
-                if (!currentMapCenter) {
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: 42.24, lon: -8.72 };
-                    refreshAircraftAt(42.24, -8.72, zoom);
-                }
-            },
-            { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
-        );
-    }
-    
-    document.getElementById('gearBtn').onclick = () => document.getElementById('controlPanel').classList.toggle('visible');
-    document.getElementById('closePanelBtn').onclick = () => document.getElementById('controlPanel').classList.remove('visible');
-    document.getElementById('locateBtn').onclick = async () => {
-        if (userLocation) {
-            map.setView([userLocation.lat, userLocation.lon], 9);
-            const zoom = map.getZoom();
-            currentMapCenter = { lat: userLocation.lat, lon: userLocation.lon };
-            await refreshAircraftAt(userLocation.lat, userLocation.lon, zoom);
-        } else {
-            alert("Esperando obtener tu ubicación...");
-        }
-    };
-    
-    initMap();
-    initGeolocation();
-    setInterval(() => {
-        if (currentMapCenter) {
-            const zoom = map.getZoom();
-            refreshAircraftAt(currentMapCenter.lat, currentMapCenter.lon, zoom);
-        }
-    }, 10000);
-    setInterval(() => weatherCache.clear(), 600000);
+    let map, userLocation, userMarker, aircraftMarkers = new Map(), weatherCache = new Map();
+    let isUpdating = false, currentMapCenter = null, firstLocationFix = true;
+    const MIN_ALT = 6000;
+    function getRadiusFromZoom(z) { return Math.max(30, Math.min(500, Math.round(400 / (z - 3)))); }
+    const pressLevels = [{press:500,alt_m:5574},{press:400,alt_m:7185},{press:300,alt_m:9164},{press:250,alt_m:10363},{press:200,alt_m:11784},{press:150,alt_m:13608},{press:100,alt_m:16184},{press:70,alt_m:18513},{press:50,alt_m:20600}];
+    const usable = pressLevels.filter(l=>l.press>=70);
+    const riskColors = {'NULA':'#00ff00','BAJA':'#ffff00','MEDIA':'#ff9800','ALTA':'#ff5722','MUY ALTA':'#ff0000','SIN DATOS':'#888888'};
+    function toRHi(RHw,T){let ew=6.1078*Math.exp(17.269*T/(T+237.29)),ei=6.1078*Math.exp(21.875*T/(T+265.5));return(RHw/100)*(ew/ei)*100;}
+    function classifyRisk(T,RH){if(T==null||RH==null)return'SIN DATOS';if(T>-40)return'NULA';let RHi=toRHi(RH,T),ts=T<=-50?3:T<=-45?2:1,rs=RHi>=110?4:RHi>=100?3:RHi>=95?2:RHi>=90?1:0,cpi=ts+rs;if(cpi>=6)return'MUY ALTA';if(cpi>=5)return'ALTA';if(cpi>=3)return'MEDIA';if(cpi>=1)return'BAJA';return'NULA';}
+    async function fetchWeather(lat,lon){let key=lat.toFixed(3)+'_'+lon.toFixed(3),now=Date.now();if(weatherCache.has(key)){let c=weatherCache.get(key);if(now-c.timestamp<300000)return c.data;}try{let vars=usable.map(l=>`temperature_${l.press}hPa`).join(','),rhvars=usable.map(l=>`relative_humidity_${l.press}hPa`).join(','),url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${vars},${rhvars}&timezone=UTC&forecast_days=1`;let r=await fetch(url);if(!r.ok)throw new Error();let d=await r.json(),hora=new Date().getUTCHours(),wb={};for(let l of usable){let ta=d.hourly[`temperature_${l.press}hPa`],ra=d.hourly[`relative_humidity_${l.press}hPa`];wb[l.press]={temp:ta?.[hora]??null,rh:ra?.[hora]??null,alt_m:l.alt_m};}let res={weatherByPressure:wb,timestamp:now};weatherCache.set(key,{data:res,timestamp:now});return res;}catch(e){return null;}}
+    function interpolateWeather(alt,wd){if(!wd?.weatherByPressure)return null;let lev=Object.entries(wd.weatherByPressure).map(([p,i])=>({press:parseInt(p),alt_m:i.alt_m,temp:i.temp,rh:i.rh})).sort((a,b)=>a.alt_m-b.alt_m);if(!lev.length)return null;if(alt<=lev[0].alt_m)return lev[0];if(alt>=lev[lev.length-1].alt_m)return lev[lev.length-1];for(let i=0;i<lev.length-1;i++){let lo=lev[i],hi=lev[i+1];if(alt>=lo.alt_m&&alt<=hi.alt_m){let r=(alt-lo.alt_m)/(hi.alt_m-lo.alt_m),temp=lo.temp!=null&&hi.temp!=null?lo.temp+r*(hi.temp-lo.temp):null,rh=lo.rh!=null&&hi.rh!=null?lo.rh+r*(hi.rh-lo.rh):null;return{temp,rh,alt_m:alt,press:`${lo.press}-${hi.press}`};}}return null;}
+    async function getRisk(lat,lon,alt){let w=await fetchWeather(lat,lon);if(!w)return{risk:'SIN DATOS',temp:null,rh:null};let res=interpolateWeather(alt,w);if(!res||res.temp==null||res.rh==null)return{risk:'SIN DATOS',temp:null,rh:null};return{risk:classifyRisk(res.temp,res.rh),temp:res.temp,rh:res.rh};}
+    async function fetchPlanes(lat,lon,radKm){let radNm=Math.min(radKm*0.539957,250),url=`https://api.airplanes.live/v2/point/${lat}/${lon}/${radNm}`;try{let r=await fetch(url);if(!r.ok)return[];let d=await r.json();if(!d?.ac)return[];return d.ac.filter(p=>p.lat&&p.lon&&(p.alt_baro||p.alt_geom));}catch(e){return[];}}
+    function getPlaneIcon(color,heading){let h=heading&&!isNaN(heading)?heading:0;let corrected=(h+90)%360;let html=`<div style="transform: rotate(${corrected}deg); transform-origin: center center; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;"><i class="fas fa-plane" style="font-size: 28px; color: ${color}; text-shadow: 0 0 1px black;"></i></div>`;return L.divIcon({html:html,iconSize:[32,32],popupAnchor:[0,-16]});}
+    async function refreshAt(lat,lon,zoom){if(isUpdating)return;let rad=getRadiusFromZoom(zoom);document.getElementById('radioValue').innerText=rad+' km';isUpdating=true;try{let list=await fetchPlanes(lat,lon,rad),enriched=[];for(let p of list){let alt=p.alt_baro||p.alt_geom||10000;if(p.alt_baro&&p.alt_baro<60000&&p.alt_baro>0)alt=p.alt_baro*0.3048;else if(p.alt_geom&&p.alt_geom<20000)alt=p.alt_geom;if(alt<MIN_ALT)continue;let riskData=await getRisk(p.lat,p.lon,alt);enriched.push({id:p.hex||`${p.lat}_${p.lon}`,lat:p.lat,lon:p.lon,altitudeM:alt,flight:p.flight||'N/A',heading:p.track||0,risk:riskData.risk,temp:riskData.temp,rh:riskData.rh});}updateMarkers(enriched);document.getElementById('planeCount').innerText=enriched.length;document.getElementById('updateTime').innerHTML=new Date().toLocaleTimeString('es');}catch(e){}finally{isUpdating=false;}}
+    function updateMarkers(list){let ids=new Set(list.map(a=>a.id));for(let[id,obj]of aircraftMarkers.entries())if(!ids.has(id)){map.removeLayer(obj.marker);aircraftMarkers.delete(id);}for(let p of list){let color=riskColors[p.risk]||riskColors['SIN DATOS'],icon=getPlaneIcon(color,p.heading),popup=`<div><b>✈️ ${p.flight}</b><br>Alt: ${Math.round(p.altitudeM)} m<br>Temp: ${p.temp?.toFixed(1)??'N/D'}°C<br>Riesgo: <span style="color:${color}">${p.risk}</span></div>`;if(aircraftMarkers.has(p.id)){let ex=aircraftMarkers.get(p.id);ex.marker.setLatLng([p.lat,p.lon]);ex.marker.setIcon(icon);ex.marker.bindPopup(popup);}else{let m=L.marker([p.lat,p.lon],{icon}).bindPopup(popup).addTo(map);aircraftMarkers.set(p.id,{marker:m});}}}
+    function initMap(){map=L.map('map',{zoomControl:false}).setView([42.24,-8.72],8);L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM'}).addTo(map);map.on('moveend',async()=>{let c=map.getCenter(),z=map.getZoom();currentMapCenter={lat:c.lat,lon:c.lng};await refreshAt(c.lat,c.lng,z);});map.on('zoomend',async()=>{let c=map.getCenter(),z=map.getZoom();currentMapCenter={lat:c.lat,lon:c.lng};await refreshAt(c.lat,c.lng,z);});}
+    function initGeo(){if(!navigator.geolocation){document.getElementById('posText').innerText='No soportado';return;}navigator.geolocation.watchPosition(async(p)=>{let{latitude,longitude}=p.coords;userLocation={lat:latitude,lon:longitude};document.getElementById('posText').innerHTML=`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;if(userMarker)map.removeLayer(userMarker);userMarker=L.circleMarker([latitude,longitude],{radius:10,fillColor:'#3b82f6',color:'#fff',weight:2,fillOpacity:0.9}).bindPopup('📍 Tu posición').addTo(map);if(firstLocationFix){map.setView([latitude,longitude],9);firstLocationFix=false;let z=map.getZoom();currentMapCenter={lat:latitude,lon:longitude};await refreshAt(latitude,longitude,z);}else if(!currentMapCenter){let z=map.getZoom();currentMapCenter={lat:latitude,lon:longitude};await refreshAt(latitude,longitude,z);}},(err)=>{document.getElementById('posText').innerText='Permiso denegado';if(!currentMapCenter){let z=map.getZoom();currentMapCenter={lat:42.24,lon:-8.72};refreshAt(42.24,-8.72,z);}},{enableHighAccuracy:true,maximumAge:20000,timeout:10000});}
+    document.getElementById('gearBtn').onclick=()=>document.getElementById('controlPanel').classList.toggle('visible');
+    document.getElementById('closePanelBtn').onclick=()=>document.getElementById('controlPanel').classList.remove('visible');
+    document.getElementById('locateBtn').onclick=async()=>{if(userLocation){map.setView([userLocation.lat,userLocation.lon],9);let z=map.getZoom();currentMapCenter={lat:userLocation.lat,lon:userLocation.lon};await refreshAt(userLocation.lat,userLocation.lon,z);}else alert('Esperando ubicación...');};
+    initMap(); initGeo();
+    setInterval(()=>{if(currentMapCenter){let z=map.getZoom();refreshAt(currentMapCenter.lat,currentMapCenter.lon,z);}},10000);
+    setInterval(()=>weatherCache.clear(),600000);
 </script>
 </body>
 </html>
