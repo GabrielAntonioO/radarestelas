@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Radar Estelas - Rumbo corregido</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #111; color: #eee; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+        
+        /* Botón de engranaje (panel) */
+        .gear-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 1001;
+            border: 1px solid #4ade80;
+            font-size: 26px;
+            color: #4ade80;
+            transition: 0.2s;
+        }
+        .gear-btn:hover { background: #1e3a2f; }
+        
+        /* Botón de centrar ubicación (fuera del panel) */
+        .locate-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 1001;
+            border: 1px solid #4ade80;
+            font-size: 24px;
+            color: #4ade80;
+            transition: 0.2s;
+        }
+        .locate-btn:hover { background: #1e3a2f; }
+        
+        /* Panel de control oculto por defecto */
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.95);
+            backdrop-filter: blur(8px);
+            border-radius: 20px;
+            padding: 14px 18px;
+            z-index: 1000;
+            border: 1px solid rgba(255,255,255,0.2);
+            min-width: 260px;
+            display: none;
+            pointer-events: auto;
+        }
+        .control-panel.visible { display: block; }
+        
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+        }
+        .panel-header h3 {
+            font-size: 1.2rem;
+            color: #4ade80;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .close-panel {
+            background: none;
+            border: none;
+            color: #aaa;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        .close-panel:hover { color: white; }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .info-label { color: #aaa; }
+        .info-value { font-weight: 600; color: white; }
+        
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+            font-size: 0.7rem;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 2px;
+        }
+        button {
+            background: #2a5c8a;
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-top: 8px;
+            width: 100%;
+        }
+        button:hover { background: #1e4a76; }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Botón engranaje (muestra/oculta panel) -->
+<div class="gear-btn" id="gearBtn"><i class="fas fa-cog"></i></div>
+<!-- Botón centrar ubicación (siempre visible) -->
+<div class="locate-btn" id="locateBtn"><i class="fas fa-crosshairs"></i></div>
+
+<div class="control-panel" id="controlPanel">
+    <div class="panel-header">
+        <h3><i class="fas fa-plane"></i> Radar Estelas</h3>
+        <button class="close-panel" id="closePanelBtn">&times;</button>
+    </div>
+    <div class="info-row">
+        <span class="info-label">📍 Tu posición:</span>
+        <span class="info-value" id="posText">--</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">✈️ Aviones en zona:</span>
+        <span class="info-value" id="planeCount">0</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">🔍 Radio (zoom):</span>
+        <span class="info-value" id="radioValue">-- km</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">🔄 Última búsqueda:</span>
+        <span class="info-value" id="updateTime">--</span>
+    </div>
+    <div class="legend">
+        <div style="width:100%; margin-bottom:5px;"><strong>Probabilidad de estelas</strong></div>
+        <div class="legend-item"><div class="legend-color" style="background:#00ff00;"></div><span>Nula</span></div>
+        <div class="legend-item"><div class="legend-color" style="background:#ffff00;"></div><span>Baja</span></div>
+        <div class="legend-item"><div class="legend-color" style="background:#ff9800;"></div><span>Media</span></div>
+        <div class="legend-item"><div class="legend-color" style="background:#ff5722;"></div><span>Alta</span></div>
+        <div class="legend-item"><div class="legend-color" style="background:#ff0000;"></div><span>Muy Alta</span></div>
+        <div class="legend-item"><div class="legend-color" style="background:#888888;"></div><span>Sin datos</span></div>
+    </div>
+    <!-- El botón centrar ya no está aquí, se ha movido fuera -->
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+    // ================= CONFIGURACIÓN =================
+    let map;
+    let userLocation = null;
+    let userMarker = null;
+    let aircraftMarkers = new Map();
+    let weatherCache = new Map();
+    let isUpdating = false;
+    let currentMapCenter = null;
+    let firstLocationFix = true;
+    
+    // Función para calcular radio según zoom (mismo que antes)
+    function getRadiusFromZoom(zoom) {
+        return Math.max(30, Math.min(500, Math.round(400 / (zoom - 3))));
+    }
+    
+    // Niveles de presión para meteorología
+    const pressureLevels = [
+        { press: 500, alt_m: 5574 }, { press: 400, alt_m: 7185 }, { press: 300, alt_m: 9164 },
+        { press: 250, alt_m: 10363 }, { press: 200, alt_m: 11784 }, { press: 150, alt_m: 13608 },
+        { press: 100, alt_m: 16184 }, { press: 70, alt_m: 18513 }, { press: 50, alt_m: 20600 }
+    ];
+    const usableLevels = pressureLevels.filter(l => l.press >= 70 && l.press <= 500);
+    
+    const riskColors = {
+        'NULA': '#00ff00', 'BAJA': '#ffff00', 'MEDIA': '#ff9800',
+        'ALTA': '#ff5722', 'MUY ALTA': '#ff0000', 'SIN DATOS': '#888888'
+    };
+    
+    // Fórmulas de estelas
+    function toRHi(RHw, T_C) {
+        const ew = 6.1078 * Math.exp(17.269 * T_C / (T_C + 237.29));
+        const ei = 6.1078 * Math.exp(21.875 * T_C / (T_C + 265.5));
+        return (RHw / 100) * (ew / ei) * 100;
+    }
+    function classifyRisk(T, RHw) {
+        if (T === null || RHw === null) return 'SIN DATOS';
+        if (T > -40) return 'NULA';
+        const RHi = toRHi(RHw, T);
+        const ts = T <= -50 ? 3 : T <= -45 ? 2 : 1;
+        const rs = RHi >= 110 ? 4 : RHi >= 100 ? 3 : RHi >= 95 ? 2 : RHi >= 90 ? 1 : 0;
+        const cpi = ts + rs;
+        if (cpi >= 6) return 'MUY ALTA';
+        if (cpi >= 5) return 'ALTA';
+        if (cpi >= 3) return 'MEDIA';
+        if (cpi >= 1) return 'BAJA';
+        return 'NULA';
+    }
+    
+    // Obtener meteorología para todos los niveles
+    async function fetchAllWeatherData(lat, lon) {
+        const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}`;
+        const now = Date.now();
+        if (weatherCache.has(cacheKey)) {
+            const cached = weatherCache.get(cacheKey);
+            if (now - cached.timestamp < 300000) return cached.data;
+        }
+        try {
+            const tempVars = usableLevels.map(l => `temperature_${l.press}hPa`).join(',');
+            const rhVars = usableLevels.map(l => `relative_humidity_${l.press}hPa`).join(',');
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${tempVars},${rhVars}&timezone=UTC&forecast_days=1`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Weather error: ${response.status}`);
+            const data = await response.json();
+            const horaActual = new Date().getUTCHours();
+            const weatherByPressure = {};
+            for (let level of usableLevels) {
+                const tempArray = data.hourly[`temperature_${level.press}hPa`];
+                const rhArray = data.hourly[`relative_humidity_${level.press}hPa`];
+                weatherByPressure[level.press] = {
+                    temp: tempArray?.[horaActual] ?? null,
+                    rh: rhArray?.[horaActual] ?? null,
+                    alt_m: level.alt_m
+                };
+            }
+            const result = { weatherByPressure, timestamp: now };
+            weatherCache.set(cacheKey, { data: result, timestamp: now });
+            return result;
+        } catch (err) {
+            console.error(err);
+            return null;
+        }
+    }
+    
+    // Interpolación precisa
+    function interpolateWeather(altMeters, weatherData) {
+        if (!weatherData?.weatherByPressure) return null;
+        const levels = Object.entries(weatherData.weatherByPressure).map(([p, i]) => ({ press: parseInt(p), alt_m: i.alt_m, temp: i.temp, rh: i.rh })).sort((a,b) => a.alt_m - b.alt_m);
+        if (levels.length === 0) return null;
+        if (altMeters <= levels[0].alt_m) return levels[0];
+        if (altMeters >= levels[levels.length-1].alt_m) return levels[levels.length-1];
+        for (let i = 0; i < levels.length-1; i++) {
+            const lower = levels[i], upper = levels[i+1];
+            if (altMeters >= lower.alt_m && altMeters <= upper.alt_m) {
+                const ratio = (altMeters - lower.alt_m) / (upper.alt_m - lower.alt_m);
+                const temp = (lower.temp !== null && upper.temp !== null) ? lower.temp + ratio * (upper.temp - lower.temp) : null;
+                const rh = (lower.rh !== null && upper.rh !== null) ? lower.rh + ratio * (upper.rh - lower.rh) : null;
+                return { temp, rh, alt_m: altMeters, press: `interp_${lower.press}-${upper.press}` };
+            }
+        }
+        return null;
+    }
+    
+    async function getRiskForAircraft(lat, lon, altMeters) {
+        const weatherData = await fetchAllWeatherData(lat, lon);
+        if (!weatherData) return { risk: 'SIN DATOS', temp: null, rh: null };
+        const result = interpolateWeather(altMeters, weatherData);
+        if (!result || result.temp === null || result.rh === null) return { risk: 'SIN DATOS', temp: null, rh: null };
+        return { risk: classifyRisk(result.temp, result.rh), temp: result.temp, rh: result.rh };
+    }
+    
+    async function fetchAircraftNearby(lat, lon, radiusKm) {
+        const radiusNm = Math.min(radiusKm * 0.539957, 250);
+        const url = `https://api.airplanes.live/v2/point/${lat}/${lon}/${radiusNm}`;
+        try {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            if (!data?.ac) return [];
+            return data.ac.filter(p => p.lat && p.lon && (p.alt_baro || p.alt_geom));
+        } catch (err) { console.error(err); return []; }
+    }
+    
+    // Icono de avión mejorado: usamos un SVG simple con forma de avión apuntando hacia arriba (0° = norte)
+    // Así la rotación es exacta.
+    function getPlaneIcon(color, heading) {
+        // Si no hay rumbo válido, no rotar
+        const headingDeg = (heading && !isNaN(heading)) ? heading : 0;
+        // SVG de un avión visto desde arriba (punta arriba)
+        const svg = `
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="${color}" stroke="#000" stroke-width="0.7">
+                <path d="M12 2L15 9H22L16 12L22 15H15L12 22L9 15H2L8 12L2 9H9L12 2Z" />
+            </svg>
+        `;
+        const encoded = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+        const icon = L.divIcon({
+            html: `<div style="transform: rotate(${headingDeg}deg); display: inline-block;"><img src="${encoded}" style="width:28px; height:28px;"></div>`,
+            iconSize: [28, 28],
+            className: 'plane-icon-custom',
+            popupAnchor: [0, -14]
+        });
+        return icon;
+    }
+    
+    async function refreshAircraftAt(lat, lon, zoomLevel) {
+        if (isUpdating) return;
+        const radiusKm = getRadiusFromZoom(zoomLevel);
+        document.getElementById('radioValue').innerHTML = radiusKm + " km";
+        isUpdating = true;
+        try {
+            const aircraftList = await fetchAircraftNearby(lat, lon, radiusKm);
+            const enriched = [];
+            for (const plane of aircraftList) {
+                let altM = plane.alt_baro || plane.alt_geom || 10000;
+                if (plane.alt_baro && plane.alt_baro < 60000 && plane.alt_baro > 0) altM = plane.alt_baro * 0.3048;
+                else if (plane.alt_geom && plane.alt_geom < 20000) altM = plane.alt_geom;
+                const heading = plane.track || 0;
+                const riskData = await getRiskForAircraft(plane.lat, plane.lon, altM);
+                enriched.push({
+                    id: plane.hex || `${plane.lat}_${plane.lon}`,
+                    lat: plane.lat, lon: plane.lon, altitudeM: altM,
+                    flight: plane.flight || "N/A", heading: heading,
+                    risk: riskData.risk, temp: riskData.temp, rh: riskData.rh
+                });
+            }
+            updateMarkers(enriched);
+            document.getElementById('planeCount').innerText = enriched.length;
+            document.getElementById('updateTime').innerHTML = new Date().toLocaleTimeString('es');
+        } catch (err) { console.error(err); }
+        finally { isUpdating = false; }
+    }
+    
+    function updateMarkers(aircraftList) {
+        const currentIds = new Set(aircraftList.map(a => a.id));
+        for (let [id, obj] of aircraftMarkers.entries()) {
+            if (!currentIds.has(id)) { map.removeLayer(obj.marker); aircraftMarkers.delete(id); }
+        }
+        for (const plane of aircraftList) {
+            const color = riskColors[plane.risk] || riskColors['SIN DATOS'];
+            const icon = getPlaneIcon(color, plane.heading);
+            // Popup sin enlace a FlightRadar24
+            const popup = `
+                <div style="font-size:12px;">
+                    <b>✈️ ${plane.flight}</b><br>
+                    Altitud: ${Math.round(plane.altitudeM)} m<br>
+                    Temp: ${plane.temp?.toFixed(1) ?? 'N/D'}°C<br>
+                    Riesgo: <span style="color:${color}">${plane.risk}</span>
+                </div>`;
+            if (aircraftMarkers.has(plane.id)) {
+                const existing = aircraftMarkers.get(plane.id);
+                existing.marker.setLatLng([plane.lat, plane.lon]);
+                existing.marker.setIcon(icon);
+                existing.marker.bindPopup(popup);
+            } else {
+                const marker = L.marker([plane.lat, plane.lon], { icon }).bindPopup(popup).addTo(map);
+                aircraftMarkers.set(plane.id, { marker });
+            }
+        }
+    }
+    
+    function initMap() {
+        map = L.map('map', { zoomControl: false }).setView([42.24, -8.72], 8);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+        }).addTo(map);
+        
+        const updateOnMove = async () => {
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            currentMapCenter = { lat: center.lat, lon: center.lng };
+            await refreshAircraftAt(center.lat, center.lng, zoom);
+        };
+        map.on('moveend', updateOnMove);
+        map.on('zoomend', updateOnMove);
+    }
+    
+    function initGeolocation() {
+        if (!navigator.geolocation) {
+            document.getElementById('posText').innerText = "No soportado";
+            return;
+        }
+        navigator.geolocation.watchPosition(
+            async (pos) => {
+                const { latitude, longitude } = pos.coords;
+                userLocation = { lat: latitude, lon: longitude };
+                document.getElementById('posText').innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+                if (userMarker) map.removeLayer(userMarker);
+                userMarker = L.circleMarker([latitude, longitude], {
+                    radius: 10,
+                    fillColor: '#3b82f6',
+                    color: '#fff',
+                    weight: 2,
+                    fillOpacity: 0.9
+                }).bindPopup("📍 Tu posición").addTo(map);
+                
+                if (firstLocationFix) {
+                    map.setView([latitude, longitude], 9);
+                    firstLocationFix = false;
+                    const zoom = map.getZoom();
+                    currentMapCenter = { lat: latitude, lon: longitude };
+                    await refreshAircraftAt(latitude, longitude, zoom);
+                } else if (!currentMapCenter) {
+                    const zoom = map.getZoom();
+                    currentMapCenter = { lat: latitude, lon: longitude };
+                    await refreshAircraftAt(latitude, longitude, zoom);
+                }
+            },
+            (err) => {
+                document.getElementById('posText').innerText = "Permiso denegado";
+                if (!currentMapCenter) {
+                    const zoom = map.getZoom();
+                    currentMapCenter = { lat: 42.24, lon: -8.72 };
+                    refreshAircraftAt(42.24, -8.72, zoom);
+                }
+            },
+            { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
+        );
+    }
+    
+    // UI
+    document.getElementById('gearBtn').onclick = () => document.getElementById('controlPanel').classList.toggle('visible');
+    document.getElementById('closePanelBtn').onclick = () => document.getElementById('controlPanel').classList.remove('visible');
+    // Botón centrar ubicación (independiente)
+    document.getElementById('locateBtn').onclick = async () => {
+        if (userLocation) {
+            map.setView([userLocation.lat, userLocation.lon], 9);
+            const zoom = map.getZoom();
+            currentMapCenter = { lat: userLocation.lat, lon: userLocation.lon };
+            await refreshAircraftAt(userLocation.lat, userLocation.lon, zoom);
+        } else {
+            alert("Esperando obtener tu ubicación...");
+        }
+    };
+    
+    initMap();
+    initGeolocation();
+    // Actualizar cada 10 segundos (10000 ms) en lugar de 5
+    setInterval(() => {
+        if (currentMapCenter) {
+            const zoom = map.getZoom();
+            refreshAircraftAt(currentMapCenter.lat, currentMapCenter.lon, zoom);
+        }
+    }, 10000);
+    setInterval(() => weatherCache.clear(), 600000);
+</script>
+</body>
+</html>
