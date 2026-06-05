@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     console.log(`[DEBUG] Radio: ${radiusKm}km`);
 
     // Llamar a api.adsb.lol
-    const url = `https://api.adsb.lol/api/0/aircraft`;
+    const url = `https://api.adsb.lol/api/ac`;
     
     console.log(`[DEBUG] URL api.adsb.lol: ${url}`);
     console.log(`[DEBUG] Intentando fetch...`);
