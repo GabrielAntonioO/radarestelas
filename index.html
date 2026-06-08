@@ -2,15 +2,29 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <!-- Ajuste para que la página se vea bien en móviles (escala inicial, sin zoom forzado) -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Radar Estelas - Definitivo</title>
+    
+    <!-- Hoja de estilos de Leaflet (mapas) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <!-- FontAwesome para el icono del avión (fa-plane) y el engranaje (fa-cog) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
     <style>
+        /* ---------- ESTILOS GLOBALES ---------- */
+        /* Elimina márgenes y paddings por defecto, usa caja flexible */
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: #111; color: #eee; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #111;
+            color: #eee;
+        }
+        /* El mapa ocupa toda la pantalla */
         #map { height: 100vh; width: 100%; z-index: 1; }
         
+        /* ---------- ESTILO PARA EL ICONO DEL AVIÓN (sin cuadrado) ---------- */
+        /* Elimina cualquier fondo o borde que Leaflet pueda añadir por defecto */
         .plane-icon-no-bg {
             background: transparent !important;
             border: none !important;
@@ -20,12 +34,13 @@
             border: none !important;
         }
         
+        /* ---------- BOTÓN ENGRANAJE (abrir panel) ---------- */
         .gear-btn {
             position: absolute;
             top: 20px;
             right: 20px;
             background: rgba(0,0,0,0.85);
-            backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);      /* efecto de vidrio */
             border-radius: 50%;
             width: 50px;
             height: 50px;
@@ -33,15 +48,17 @@
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            z-index: 1001;
+            z-index: 1001;                   /* por encima del mapa */
             border: 1px solid #4ade80;
             font-size: 26px;
             color: #4ade80;
             transition: 0.2s;
         }
         .gear-btn:hover { background: #1e3a2f; }
+        /* Clase para ocultar el engranaje cuando el panel está abierto */
         .gear-btn.hidden { display: none; }
         
+        /* ---------- BOTÓN CENTRAR UBICACIÓN (siempre visible) ---------- */
         .locate-btn {
             position: absolute;
             bottom: 30px;
@@ -63,6 +80,7 @@
         }
         .locate-btn:hover { background: #1e3a2f; }
         
+        /* ---------- PANEL DE CONTROL (oculto por defecto) ---------- */
         .control-panel {
             position: absolute;
             top: 20px;
@@ -74,11 +92,13 @@
             z-index: 1000;
             border: 1px solid rgba(255,255,255,0.2);
             min-width: 260px;
-            display: none;
+            display: none;          /* inicialmente invisible */
             pointer-events: auto;
         }
+        /* Clase para mostrar el panel */
         .control-panel.visible { display: block; }
         
+        /* Cabecera del panel (solo título, sin botón X) */
         .panel-header {
             margin-bottom: 12px;
             border-bottom: 1px solid #333;
@@ -92,6 +112,7 @@
             gap: 8px;
         }
         
+        /* Filas de información (posición, avistados, radio, hora) */
         .info-row {
             display: flex;
             justify-content: space-between;
@@ -101,6 +122,7 @@
         .info-label { color: #aaa; }
         .info-value { font-weight: 600; color: white; }
         
+        /* Leyenda de colores de riesgo */
         .legend {
             display: flex;
             flex-wrap: wrap;
@@ -123,358 +145,461 @@
     </style>
 </head>
 <body>
-<div id="map"></div>
+    <!-- Contenedor del mapa (Leaflet lo dibujará aquí) -->
+    <div id="map"></div>
 
-<div class="gear-btn" id="gearBtn"><i class="fas fa-cog"></i></div>
-<div class="locate-btn" id="locateBtn"><i class="fas fa-crosshairs"></i></div>
+    <!-- Botón engranaje (abre panel) -->
+    <div class="gear-btn" id="gearBtn"><i class="fas fa-cog"></i></div>
+    <!-- Botón centrar ubicación (siempre visible) -->
+    <div class="locate-btn" id="locateBtn"><i class="fas fa-crosshairs"></i></div>
 
-<div class="control-panel" id="controlPanel">
-    <div class="panel-header">
-        <h3><i class="fas fa-plane"></i> Radar Estelas</h3>
+    <!-- Panel de control (datos y leyenda) -->
+    <div class="control-panel" id="controlPanel">
+        <div class="panel-header">
+            <h3><i class="fas fa-plane"></i> Radar Estelas</h3>
+        </div>
+        <div class="info-row">
+            <span class="info-label">📍 Tu posición:</span>
+            <span class="info-value" id="posText">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">✈️ Aviones en zona:</span>
+            <span class="info-value" id="planeCount">0</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">🔍 Radio (zoom):</span>
+            <span class="info-value" id="radioValue">-- km</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">🔄 Última búsqueda:</span>
+            <span class="info-value" id="updateTime">--</span>
+        </div>
+        <!-- Leyenda de probabilidad de estelas con rangos porcentuales -->
+        <div class="legend">
+            <div style="width:100%; margin-bottom:5px;"><strong>Probabilidad de estelas</strong></div>
+            <div class="legend-item"><div class="legend-color" style="background:#00ff00;"></div><span>Nula (0-20%)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background:#ffff00;"></div><span>Baja (21-40%)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background:#ff9800;"></div><span>Media (41-60%)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background:#ff5722;"></div><span>Alta (61-80%)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background:#ff0000;"></div><span>Muy Alta (81-100%)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background:#888888;"></div><span>Sin datos</span></div>
+        </div>
     </div>
-    <div class="info-row">
-        <span class="info-label">📍 Tu posición:</span>
-        <span class="info-value" id="posText">--</span>
-    </div>
-    <div class="info-row">
-        <span class="info-label">✈️ Aviones en zona:</span>
-        <span class="info-value" id="planeCount">0</span>
-    </div>
-    <div class="info-row">
-        <span class="info-label">🔍 Radio (zoom):</span>
-        <span class="info-value" id="radioValue">-- km</span>
-    </div>
-    <div class="info-row">
-        <span class="info-label">🔄 Última búsqueda:</span>
-        <span class="info-value" id="updateTime">--</span>
-    </div>
-    <div class="legend">
-        <div style="width:100%; margin-bottom:5px;"><strong>Probabilidad de estelas</strong></div>
-        <div class="legend-item"><div class="legend-color" style="background:#00ff00;"></div><span>Nula (0-20%)</span></div>
-        <div class="legend-item"><div class="legend-color" style="background:#ffff00;"></div><span>Baja (21-40%)</span></div>
-        <div class="legend-item"><div class="legend-color" style="background:#ff9800;"></div><span>Media (41-60%)</span></div>
-        <div class="legend-item"><div class="legend-color" style="background:#ff5722;"></div><span>Alta (61-80%)</span></div>
-        <div class="legend-item"><div class="legend-color" style="background:#ff0000;"></div><span>Muy Alta (81-100%)</span></div>
-        <div class="legend-item"><div class="legend-color" style="background:#888888;"></div><span>Sin datos</span></div>
-    </div>
-</div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script>
-    // ================= CONFIGURACIÓN =================
-    let map;
-    let userLocation = null;
-    let userMarker = null;
-    let aircraftMarkers = new Map();
-    let weatherCache = new Map();
-    let isUpdating = false;
-    let currentMapCenter = null;
-    let firstLocationFix = true;
+    <!-- Librería Leaflet para el mapa -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     
-    // ✅ CORRECCIÓN DEFINITIVA: 270 grados (equivalente a -90)
-    const ROTATION_FIX = 270;
-    const MIN_ALTITUDE_FOR_CONTRAIL = 6000;
-    
-    function riskToPercent(risk) {
-        switch(risk) {
-            case 'NULA': return 10;
-            case 'BAJA': return 30;
-            case 'MEDIA': return 50;
-            case 'ALTA': return 75;
-            case 'MUY ALTA': return 95;
-            default: return 0;
+    <script>
+        // ================= CONFIGURACIÓN GLOBAL =================
+        
+        // Referencias a elementos del mapa y estado
+        let map;                     // instancia del mapa Leaflet
+        let userLocation = null;     // {lat, lon} del usuario (GPS)
+        let userMarker = null;       // marcador circular azul en el mapa
+        let aircraftMarkers = new Map(); // almacena marcadores de aviones (clave = id del avión)
+        let weatherCache = new Map();    // caché de datos meteorológicos por coordenadas
+        let isUpdating = false;          // evita múltiples actualizaciones simultáneas
+        let currentMapCenter = null;     // centro actual del mapa (para refrescos automáticos)
+        let firstLocationFix = true;     // para centrar solo la primera vez que se obtiene GPS
+        
+        // CONSTANTES AJUSTABLES
+        const ROTATION_FIX = 270;        // corrección de rumbo (270° = +270 grados)
+        const MIN_ALTITUDE_FOR_CONTRAIL = 6000; // metros (solo aviones por encima de 6 km)
+        
+        // ---------- FUNCIÓN: RADIO SEGÚN ZOOM ----------
+        // A más zoom, menor radio (para ver aviones cercanos)
+        // Devuelve un valor entre 30 y 500 km
+        function getRadiusFromZoom(zoom) {
+            // Fórmula empírica: a zoom 8 → ~120km, zoom 12 → ~50km
+            return Math.max(30, Math.min(500, Math.round(400 / (zoom - 3))));
         }
-    }
-    
-    function getRadiusFromZoom(zoom) {
-        return Math.max(30, Math.min(500, Math.round(400 / (zoom - 3))));
-    }
-    
-    const pressureLevels = [
-        { press: 500, alt_m: 5574 }, { press: 400, alt_m: 7185 }, { press: 300, alt_m: 9164 },
-        { press: 250, alt_m: 10363 }, { press: 200, alt_m: 11784 }, { press: 150, alt_m: 13608 },
-        { press: 100, alt_m: 16184 }, { press: 70, alt_m: 18513 }, { press: 50, alt_m: 20600 }
-    ];
-    const usableLevels = pressureLevels.filter(l => l.press >= 70 && l.press <= 500);
-    
-    const riskColors = {
-        'NULA': '#00ff00', 'BAJA': '#ffff00', 'MEDIA': '#ff9800',
-        'ALTA': '#ff5722', 'MUY ALTA': '#ff0000', 'SIN DATOS': '#888888'
-    };
-    
-    function toRHi(RHw, T_C) {
-        const ew = 6.1078 * Math.exp(17.269 * T_C / (T_C + 237.29));
-        const ei = 6.1078 * Math.exp(21.875 * T_C / (T_C + 265.5));
-        return (RHw / 100) * (ew / ei) * 100;
-    }
-    
-    function classifyRisk(T, RHw) {
-        if (T === null || RHw === null) return 'SIN DATOS';
-        if (T > -40) return 'NULA';
-        const RHi = toRHi(RHw, T);
-        const ts = T <= -50 ? 3 : T <= -45 ? 2 : 1;
-        const rs = RHi >= 110 ? 4 : RHi >= 100 ? 3 : RHi >= 95 ? 2 : RHi >= 90 ? 1 : 0;
-        const cpi = ts + rs;
-        if (cpi >= 6) return 'MUY ALTA';
-        if (cpi >= 5) return 'ALTA';
-        if (cpi >= 3) return 'MEDIA';
-        if (cpi >= 1) return 'BAJA';
-        return 'NULA';
-    }
-    
-    async function fetchAllWeatherData(lat, lon) {
-        const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}`;
-        const now = Date.now();
-        if (weatherCache.has(cacheKey)) {
-            const cached = weatherCache.get(cacheKey);
-            if (now - cached.timestamp < 300000) return cached.data;
-        }
-        try {
-            const tempVars = usableLevels.map(l => `temperature_${l.press}hPa`).join(',');
-            const rhVars = usableLevels.map(l => `relative_humidity_${l.press}hPa`).join(',');
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${tempVars},${rhVars}&timezone=UTC&forecast_days=1`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Weather error: ${response.status}`);
-            const data = await response.json();
-            const horaActual = new Date().getUTCHours();
-            const weatherByPressure = {};
-            for (let level of usableLevels) {
-                const tempArray = data.hourly[`temperature_${level.press}hPa`];
-                const rhArray = data.hourly[`relative_humidity_${level.press}hPa`];
-                weatherByPressure[level.press] = {
-                    temp: tempArray?.[horaActual] ?? null,
-                    rh: rhArray?.[horaActual] ?? null,
-                    alt_m: level.alt_m
-                };
+        
+        // ---------- CONVERSIÓN RIESGO -> PORCENTAJE ----------
+        // Valores orientativos para mostrar en el popup
+        function riskToPercent(risk) {
+            switch(risk) {
+                case 'NULA': return 10;
+                case 'BAJA': return 30;
+                case 'MEDIA': return 50;
+                case 'ALTA': return 75;
+                case 'MUY ALTA': return 95;
+                default: return 0;
             }
-            const result = { weatherByPressure, timestamp: now };
-            weatherCache.set(cacheKey, { data: result, timestamp: now });
-            return result;
-        } catch (err) {
-            console.error(err);
+        }
+        
+        // ================= DATOS DE PRESIÓN Y ALTITUD =================
+        // Niveles de presión estándar (hPa) y su altitud típica (metros)
+        // Usados por Open-Meteo y para interpolar condiciones a la altitud real del avión
+        const pressureLevels = [
+            { press: 500, alt_m: 5574 },  // ~5.5 km
+            { press: 400, alt_m: 7185 },  // ~7.2 km
+            { press: 300, alt_m: 9164 },  // ~9.2 km
+            { press: 250, alt_m: 10363 }, // ~10.4 km
+            { press: 200, alt_m: 11784 }, // ~11.8 km
+            { press: 150, alt_m: 13608 }, // ~13.6 km
+            { press: 100, alt_m: 16184 }, // ~16.2 km
+            { press: 70,  alt_m: 18513 }, // ~18.5 km
+            { press: 50,  alt_m: 20600 }  // ~20.6 km
+        ];
+        // Usamos solo los niveles que nos interesan (hasta 70 hPa, cubren vuelos comerciales)
+        const usableLevels = pressureLevels.filter(l => l.press >= 70 && l.press <= 500);
+        
+        // Colores asociados a cada nivel de riesgo (para los iconos y leyenda)
+        const riskColors = {
+            'NULA': '#00ff00',
+            'BAJA': '#ffff00',
+            'MEDIA': '#ff9800',
+            'ALTA': '#ff5722',
+            'MUY ALTA': '#ff0000',
+            'SIN DATOS': '#888888'
+        };
+        
+        // ================= FÓRMULAS METEOROLÓGICAS (CONTRAILS) =================
+        // Convierte humedad relativa sobre agua (RHw) a humedad relativa sobre hielo (RHi)
+        // usando ecuaciones de Magnus.
+        function toRHi(RHw, T_C) {
+            const ew = 6.1078 * Math.exp(17.269 * T_C / (T_C + 237.29));
+            const ei = 6.1078 * Math.exp(21.875 * T_C / (T_C + 265.5));
+            return (RHw / 100) * (ew / ei) * 100;
+        }
+        
+        // Clasifica el riesgo de estela según temperatura (T) y humedad relativa sobre agua (RHw)
+        // Basado en Schumann 1996 adaptado.
+        function classifyRisk(T, RHw) {
+            if (T === null || RHw === null) return 'SIN DATOS';
+            if (T > -40) return 'NULA';
+            const RHi = toRHi(RHw, T);
+            // Puntuación de temperatura (ts)
+            const ts = T <= -50 ? 3 : T <= -45 ? 2 : 1;
+            // Puntuación de humedad (rs)
+            const rs = RHi >= 110 ? 4 : RHi >= 100 ? 3 : RHi >= 95 ? 2 : RHi >= 90 ? 1 : 0;
+            const cpi = ts + rs;
+            if (cpi >= 6) return 'MUY ALTA';
+            if (cpi >= 5) return 'ALTA';
+            if (cpi >= 3) return 'MEDIA';
+            if (cpi >= 1) return 'BAJA';
+            return 'NULA';
+        }
+        
+        // ================= CONSULTA A OPEN-METEO (MULTINIVEL) =================
+        // Obtiene temperatura y humedad para todos los niveles de presión en una coordenada.
+        // Usa caché de 5 minutos para evitar repetir llamadas.
+        async function fetchAllWeatherData(lat, lon) {
+            const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}`;
+            const now = Date.now();
+            if (weatherCache.has(cacheKey)) {
+                const cached = weatherCache.get(cacheKey);
+                if (now - cached.timestamp < 300000) return cached.data; // válido por 5 min
+            }
+            try {
+                // Construir lista de variables para la URL de Open-Meteo
+                const tempVars = usableLevels.map(l => `temperature_${l.press}hPa`).join(',');
+                const rhVars = usableLevels.map(l => `relative_humidity_${l.press}hPa`).join(',');
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${tempVars},${rhVars}&timezone=UTC&forecast_days=1`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Weather error: ${response.status}`);
+                const data = await response.json();
+                const horaActual = new Date().getUTCHours(); // datos horarios UTC
+                const weatherByPressure = {};
+                for (let level of usableLevels) {
+                    const tempArray = data.hourly[`temperature_${level.press}hPa`];
+                    const rhArray = data.hourly[`relative_humidity_${level.press}hPa`];
+                    weatherByPressure[level.press] = {
+                        temp: tempArray?.[horaActual] ?? null,
+                        rh: rhArray?.[horaActual] ?? null,
+                        alt_m: level.alt_m
+                    };
+                }
+                const result = { weatherByPressure, timestamp: now };
+                weatherCache.set(cacheKey, { data: result, timestamp: now });
+                return result;
+            } catch (err) {
+                console.error("Error en Open-Meteo:", err);
+                return null;
+            }
+        }
+        
+        // ================= INTERPOLACIÓN METEOROLÓGICA =================
+        // Dada una altitud en metros y los datos por niveles, interpola linealmente
+        // para obtener temperatura y humedad exactas a esa altitud.
+        function interpolateWeather(altMeters, weatherData) {
+            if (!weatherData?.weatherByPressure) return null;
+            // Convertir objeto a array ordenado por altitud
+            const levels = Object.entries(weatherData.weatherByPressure)
+                .map(([p, i]) => ({ press: parseInt(p), alt_m: i.alt_m, temp: i.temp, rh: i.rh }))
+                .sort((a,b) => a.alt_m - b.alt_m);
+            if (levels.length === 0) return null;
+            if (altMeters <= levels[0].alt_m) return levels[0];
+            if (altMeters >= levels[levels.length-1].alt_m) return levels[levels.length-1];
+            for (let i = 0; i < levels.length-1; i++) {
+                const lower = levels[i];
+                const upper = levels[i+1];
+                if (altMeters >= lower.alt_m && altMeters <= upper.alt_m) {
+                    const ratio = (altMeters - lower.alt_m) / (upper.alt_m - lower.alt_m);
+                    const temp = (lower.temp !== null && upper.temp !== null) 
+                        ? lower.temp + ratio * (upper.temp - lower.temp) 
+                        : null;
+                    const rh = (lower.rh !== null && upper.rh !== null) 
+                        ? lower.rh + ratio * (upper.rh - lower.rh) 
+                        : null;
+                    return { temp, rh, alt_m: altMeters };
+                }
+            }
             return null;
         }
-    }
-    
-    function interpolateWeather(altMeters, weatherData) {
-        if (!weatherData?.weatherByPressure) return null;
-        const levels = Object.entries(weatherData.weatherByPressure).map(([p, i]) => ({ press: parseInt(p), alt_m: i.alt_m, temp: i.temp, rh: i.rh })).sort((a,b) => a.alt_m - b.alt_m);
-        if (levels.length === 0) return null;
-        if (altMeters <= levels[0].alt_m) return levels[0];
-        if (altMeters >= levels[levels.length-1].alt_m) return levels[levels.length-1];
-        for (let i = 0; i < levels.length-1; i++) {
-            const lower = levels[i], upper = levels[i+1];
-            if (altMeters >= lower.alt_m && altMeters <= upper.alt_m) {
-                const ratio = (altMeters - lower.alt_m) / (upper.alt_m - lower.alt_m);
-                const temp = (lower.temp !== null && upper.temp !== null) ? lower.temp + ratio * (upper.temp - lower.temp) : null;
-                const rh = (lower.rh !== null && upper.rh !== null) ? lower.rh + ratio * (upper.rh - lower.rh) : null;
-                return { temp, rh, alt_m: altMeters, press: `interp_${lower.press}-${upper.press}` };
+        
+        // Función de alto nivel: obtiene el riesgo y datos meteorológicos para un avión
+        async function getRiskForAircraft(lat, lon, altMeters) {
+            const weatherData = await fetchAllWeatherData(lat, lon);
+            if (!weatherData) return { risk: 'SIN DATOS', temp: null, rh: null, percent: 0 };
+            const result = interpolateWeather(altMeters, weatherData);
+            if (!result || result.temp === null || result.rh === null) 
+                return { risk: 'SIN DATOS', temp: null, rh: null, percent: 0 };
+            const risk = classifyRisk(result.temp, result.rh);
+            const percent = riskToPercent(risk);
+            return { risk, temp: result.temp, rh: result.rh, percent };
+        }
+        
+        // ================= CONSULTA DE AVIONES (airplanes.live) =================
+        // Devuelve lista de aviones dentro de un radio (en km) desde un centro.
+        async function fetchAircraftNearby(lat, lon, radiusKm) {
+            // La API de airplanes.live usa millas náuticas (1 km = 0.539957 nm)
+            const radiusNm = Math.min(radiusKm * 0.539957, 250);
+            const url = `https://api.airplanes.live/v2/point/${lat}/${lon}/${radiusNm}`;
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                if (!data?.ac) return [];
+                // Filtrar aviones que tengan latitud, longitud y altitud válida
+                return data.ac.filter(p => p.lat && p.lon && (p.alt_baro || p.alt_geom));
+            } catch (err) {
+                console.error("Error en airplanes.live:", err);
+                return [];
             }
         }
-        return null;
-    }
-    
-    async function getRiskForAircraft(lat, lon, altMeters) {
-        const weatherData = await fetchAllWeatherData(lat, lon);
-        if (!weatherData) return { risk: 'SIN DATOS', temp: null, rh: null, percent: 0 };
-        const result = interpolateWeather(altMeters, weatherData);
-        if (!result || result.temp === null || result.rh === null) return { risk: 'SIN DATOS', temp: null, rh: null, percent: 0 };
-        const risk = classifyRisk(result.temp, result.rh);
-        const percent = riskToPercent(risk);
-        return { risk, temp: result.temp, rh: result.rh, percent };
-    }
-    
-    async function fetchAircraftNearby(lat, lon, radiusKm) {
-        const radiusNm = Math.min(radiusKm * 0.539957, 250);
-        const url = `https://api.airplanes.live/v2/point/${lat}/${lon}/${radiusNm}`;
-        try {
-            const resp = await fetch(url);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (!data?.ac) return [];
-            return data.ac.filter(p => p.lat && p.lon && (p.alt_baro || p.alt_geom));
-        } catch (err) { console.error(err); return []; }
-    }
-    
-    // Icono de avión con corrección definitiva de 270 grados
-    function getPlaneIcon(color, heading) {
-        const headingDeg = (heading && !isNaN(heading)) ? heading : 0;
-        const corrected = (headingDeg + ROTATION_FIX) % 360;
-        const html = `
-            <div style="transform: rotate(${corrected}deg); transform-origin: center center; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: none;">
-                <i class="fas fa-plane" style="font-size: 28px; color: ${color}; text-shadow: 0 0 1px black;"></i>
-            </div>
-        `;
-        return L.divIcon({
-            html: html,
-            iconSize: [32, 32],
-            className: 'plane-icon-no-bg',
-            popupAnchor: [0, -16]
-        });
-    }
-    
-    async function refreshAircraftAt(lat, lon, zoomLevel) {
-        if (isUpdating) return;
-        const radiusKm = getRadiusFromZoom(zoomLevel);
-        document.getElementById('radioValue').innerHTML = radiusKm + " km";
-        isUpdating = true;
-        try {
-            const aircraftList = await fetchAircraftNearby(lat, lon, radiusKm);
-            const enriched = [];
-            for (const plane of aircraftList) {
-                let altM = plane.alt_baro || plane.alt_geom || 10000;
-                if (plane.alt_baro && plane.alt_baro < 60000 && plane.alt_baro > 0) altM = plane.alt_baro * 0.3048;
-                else if (plane.alt_geom && plane.alt_geom < 20000) altM = plane.alt_geom;
-                
-                if (altM < MIN_ALTITUDE_FOR_CONTRAIL) continue;
-                
-                const heading = plane.track || 0;
-                const riskData = await getRiskForAircraft(plane.lat, plane.lon, altM);
-                enriched.push({
-                    id: plane.hex || `${plane.lat}_${plane.lon}`,
-                    lat: plane.lat, lon: plane.lon, altitudeM: altM,
-                    flight: plane.flight || "N/A", heading: heading,
-                    risk: riskData.risk, temp: riskData.temp, rh: riskData.rh,
-                    percent: riskData.percent
-                });
-            }
-            updateMarkers(enriched);
-            document.getElementById('planeCount').innerText = enriched.length;
-            document.getElementById('updateTime').innerHTML = new Date().toLocaleTimeString('es');
-        } catch (err) { console.error(err); }
-        finally { isUpdating = false; }
-    }
-    
-    function updateMarkers(aircraftList) {
-        const currentIds = new Set(aircraftList.map(a => a.id));
-        for (let [id, obj] of aircraftMarkers.entries()) {
-            if (!currentIds.has(id)) { map.removeLayer(obj.marker); aircraftMarkers.delete(id); }
-        }
-        for (const plane of aircraftList) {
-            const color = riskColors[plane.risk] || riskColors['SIN DATOS'];
-            const icon = getPlaneIcon(color, plane.heading);
-            const popup = `
-                <div style="font-size:12px;">
-                    <b>✈️ ${plane.flight}</b><br>
-                    Altitud: ${Math.round(plane.altitudeM)} m<br>
-                    Temp: ${plane.temp?.toFixed(1) ?? 'N/D'}°C<br>
-                    Riesgo: <span style="color:${color}">${plane.risk} (${plane.percent}%)</span>
+        
+        // ================= ICONO DEL AVIÓN =================
+        // Usa FontAwesome (fa-plane) con color según riesgo y rotación corregida.
+        // Se aplica ROTATION_FIX = 270° para que apunte correctamente (según pruebas).
+        function getPlaneIcon(color, heading) {
+            const headingDeg = (heading && !isNaN(heading)) ? heading : 0;
+            const corrected = (headingDeg + ROTATION_FIX) % 360;
+            // Contenedor con fondo transparente y sin bordes para evitar el "cuadrado"
+            const html = `
+                <div style="transform: rotate(${corrected}deg); transform-origin: center center; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: none;">
+                    <i class="fas fa-plane" style="font-size: 28px; color: ${color}; text-shadow: 0 0 1px black;"></i>
                 </div>
             `;
-            if (aircraftMarkers.has(plane.id)) {
-                const existing = aircraftMarkers.get(plane.id);
-                existing.marker.setLatLng([plane.lat, plane.lon]);
-                existing.marker.setIcon(icon);
-                existing.marker.bindPopup(popup);
-            } else {
-                const marker = L.marker([plane.lat, plane.lon], { icon }).bindPopup(popup).addTo(map);
-                aircraftMarkers.set(plane.id, { marker });
+            return L.divIcon({
+                html: html,
+                iconSize: [32, 32],
+                className: 'plane-icon-no-bg',
+                popupAnchor: [0, -16]   // el popup aparece 16px por encima del icono
+            });
+        }
+        
+        // ================= ACTUALIZACIÓN DEL MAPA (AVIONES) =================
+        // Obtiene aviones, calcula riesgo, y actualiza los marcadores.
+        async function refreshAircraftAt(lat, lon, zoomLevel) {
+            if (isUpdating) return;
+            const radiusKm = getRadiusFromZoom(zoomLevel);
+            document.getElementById('radioValue').innerHTML = radiusKm + " km";
+            isUpdating = true;
+            try {
+                const aircraftList = await fetchAircraftNearby(lat, lon, radiusKm);
+                const enriched = [];
+                for (const plane of aircraftList) {
+                    // Calcular altitud en metros (la API a veces da pies, a veces metros)
+                    let altM = plane.alt_baro || plane.alt_geom || 10000;
+                    if (plane.alt_baro && plane.alt_baro < 60000 && plane.alt_baro > 0) {
+                        altM = plane.alt_baro * 0.3048; // convertir pies a metros
+                    } else if (plane.alt_geom && plane.alt_geom < 20000) {
+                        altM = plane.alt_geom; // ya en metros
+                    }
+                    // Filtro por altitud mínima (evita aviones en despegue/aterrizaje)
+                    if (altM < MIN_ALTITUDE_FOR_CONTRAIL) continue;
+                    
+                    const heading = plane.track || 0;
+                    const riskData = await getRiskForAircraft(plane.lat, plane.lon, altM);
+                    enriched.push({
+                        id: plane.hex || `${plane.lat}_${plane.lon}`,
+                        lat: plane.lat,
+                        lon: plane.lon,
+                        altitudeM: altM,
+                        flight: plane.flight || "N/A",
+                        heading: heading,
+                        risk: riskData.risk,
+                        temp: riskData.temp,
+                        rh: riskData.rh,
+                        percent: riskData.percent
+                    });
+                }
+                updateMarkers(enriched);
+                document.getElementById('planeCount').innerText = enriched.length;
+                document.getElementById('updateTime').innerHTML = new Date().toLocaleTimeString('es');
+            } catch (err) {
+                console.error("Error refrescando aviones:", err);
+            } finally {
+                isUpdating = false;
             }
         }
-    }
-    
-    function initMap() {
-        map = L.map('map', { zoomControl: false }).setView([42.24, -8.72], 8);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-        }).addTo(map);
         
-        const updateOnMove = async () => {
-            const center = map.getCenter();
-            const zoom = map.getZoom();
-            currentMapCenter = { lat: center.lat, lon: center.lng };
-            await refreshAircraftAt(center.lat, center.lng, zoom);
+        // Actualiza o crea los marcadores en el mapa a partir de la lista de aviones enriquecida
+        function updateMarkers(aircraftList) {
+            const currentIds = new Set(aircraftList.map(a => a.id));
+            // Eliminar marcadores de aviones que ya no están en la lista
+            for (let [id, obj] of aircraftMarkers.entries()) {
+                if (!currentIds.has(id)) {
+                    map.removeLayer(obj.marker);
+                    aircraftMarkers.delete(id);
+                }
+            }
+            // Añadir o actualizar marcadores existentes
+            for (const plane of aircraftList) {
+                const color = riskColors[plane.risk] || riskColors['SIN DATOS'];
+                const icon = getPlaneIcon(color, plane.heading);
+                // Popup con información detallada (incluye porcentaje de riesgo)
+                const popup = `
+                    <div style="font-size:12px;">
+                        <b>✈️ ${plane.flight}</b><br>
+                        Altitud: ${Math.round(plane.altitudeM)} m<br>
+                        Temp: ${plane.temp?.toFixed(1) ?? 'N/D'}°C<br>
+                        Riesgo: <span style="color:${color}">${plane.risk} (${plane.percent}%)</span>
+                    </div>
+                `;
+                if (aircraftMarkers.has(plane.id)) {
+                    const existing = aircraftMarkers.get(plane.id);
+                    existing.marker.setLatLng([plane.lat, plane.lon]);
+                    existing.marker.setIcon(icon);
+                    existing.marker.bindPopup(popup);
+                } else {
+                    const marker = L.marker([plane.lat, plane.lon], { icon }).bindPopup(popup).addTo(map);
+                    aircraftMarkers.set(plane.id, { marker });
+                }
+            }
+        }
+        
+        // ================= CONFIGURACIÓN DEL MAPA (LEAFLET) =================
+        function initMap() {
+            // Crear mapa centrado inicialmente en Vigo (aproximado), sin botones de zoom (+/-)
+            map = L.map('map', { zoomControl: false }).setView([42.24, -8.72], 8);
+            // Capa base de tiles (CartoDB Light, compatible con OSM)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+            }).addTo(map);
+            
+            // Eventos: al terminar de mover el mapa o cambiar el zoom, se refrescan los aviones
+            const updateOnMove = async () => {
+                const center = map.getCenter();
+                const zoom = map.getZoom();
+                currentMapCenter = { lat: center.lat, lon: center.lng };
+                await refreshAircraftAt(center.lat, center.lng, zoom);
+            };
+            map.on('moveend', updateOnMove);
+            map.on('zoomend', updateOnMove);
+        }
+        
+        // ================= GEOLOCALIZACIÓN =================
+        // Obtiene la posición del usuario, dibuja un marcador y centra el mapa SOLO la primera vez.
+        function initGeolocation() {
+            if (!navigator.geolocation) {
+                document.getElementById('posText').innerText = "No soportado";
+                return;
+            }
+            navigator.geolocation.watchPosition(
+                async (pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    userLocation = { lat: latitude, lon: longitude };
+                    document.getElementById('posText').innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+                    // Marcador circular azul de la posición del usuario
+                    if (userMarker) map.removeLayer(userMarker);
+                    userMarker = L.circleMarker([latitude, longitude], {
+                        radius: 10,
+                        fillColor: '#3b82f6',
+                        color: '#fff',
+                        weight: 2,
+                        fillOpacity: 0.9
+                    }).bindPopup("📍 Tu posición").addTo(map);
+                    
+                    // Solo la primera vez que se obtiene la posición, centrar el mapa
+                    if (firstLocationFix) {
+                        map.setView([latitude, longitude], 9);
+                        firstLocationFix = false;
+                        const zoom = map.getZoom();
+                        currentMapCenter = { lat: latitude, lon: longitude };
+                        await refreshAircraftAt(latitude, longitude, zoom);
+                    } else if (!currentMapCenter) {
+                        const zoom = map.getZoom();
+                        currentMapCenter = { lat: latitude, lon: longitude };
+                        await refreshAircraftAt(latitude, longitude, zoom);
+                    }
+                },
+                (err) => {
+                    // Si el usuario deniega el permiso, se muestra un mensaje y se usa posición por defecto (Vigo)
+                    document.getElementById('posText').innerText = "Permiso denegado";
+                    if (!currentMapCenter) {
+                        const zoom = map.getZoom();
+                        currentMapCenter = { lat: 42.24, lon: -8.72 };
+                        refreshAircraftAt(42.24, -8.72, zoom);
+                    }
+                },
+                { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
+            );
+        }
+        
+        // ================= FUNCIONES DE INTERFAZ (PANEL) =================
+        function openPanel() {
+            document.getElementById('controlPanel').classList.add('visible');
+            document.getElementById('gearBtn').classList.add('hidden');  // oculta el engranaje
+        }
+        
+        function closePanel() {
+            document.getElementById('controlPanel').classList.remove('visible');
+            document.getElementById('gearBtn').classList.remove('hidden'); // reaparece
+        }
+        
+        // ================= EVENTOS =================
+        // Al hacer clic en el engranaje → abre panel
+        document.getElementById('gearBtn').onclick = (e) => {
+            e.stopPropagation(); // evita que el clic se propague y cierre inmediatamente
+            openPanel();
         };
-        map.on('moveend', updateOnMove);
-        map.on('zoomend', updateOnMove);
-    }
-    
-    function openPanel() {
-        document.getElementById('controlPanel').classList.add('visible');
-        document.getElementById('gearBtn').classList.add('hidden');
-    }
-    
-    function closePanel() {
-        document.getElementById('controlPanel').classList.remove('visible');
-        document.getElementById('gearBtn').classList.remove('hidden');
-    }
-    
-    function initGeolocation() {
-        if (!navigator.geolocation) {
-            document.getElementById('posText').innerText = "No soportado";
-            return;
-        }
-        navigator.geolocation.watchPosition(
-            async (pos) => {
-                const { latitude, longitude } = pos.coords;
-                userLocation = { lat: latitude, lon: longitude };
-                document.getElementById('posText').innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
-                if (userMarker) map.removeLayer(userMarker);
-                userMarker = L.circleMarker([latitude, longitude], {
-                    radius: 10,
-                    fillColor: '#3b82f6',
-                    color: '#fff',
-                    weight: 2,
-                    fillOpacity: 0.9
-                }).bindPopup("📍 Tu posición").addTo(map);
-                
-                if (firstLocationFix) {
-                    map.setView([latitude, longitude], 9);
-                    firstLocationFix = false;
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: latitude, lon: longitude };
-                    await refreshAircraftAt(latitude, longitude, zoom);
-                } else if (!currentMapCenter) {
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: latitude, lon: longitude };
-                    await refreshAircraftAt(latitude, longitude, zoom);
-                }
-            },
-            (err) => {
-                document.getElementById('posText').innerText = "Permiso denegado";
-                if (!currentMapCenter) {
-                    const zoom = map.getZoom();
-                    currentMapCenter = { lat: 42.24, lon: -8.72 };
-                    refreshAircraftAt(42.24, -8.72, zoom);
-                }
-            },
-            { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
-        );
-    }
-    
-    // Eventos UI
-    document.getElementById('gearBtn').onclick = (e) => {
-        e.stopPropagation();
-        openPanel();
-    };
-    
-    document.addEventListener('click', function(e) {
-        const panel = document.getElementById('controlPanel');
-        if (panel.classList.contains('visible')) {
-            closePanel();
-        }
-    });
-    
-    document.getElementById('locateBtn').onclick = async () => {
-        if (userLocation) {
-            map.setView([userLocation.lat, userLocation.lon], 9);
-            const zoom = map.getZoom();
-            currentMapCenter = { lat: userLocation.lat, lon: userLocation.lon };
-            await refreshAircraftAt(userLocation.lat, userLocation.lon, zoom);
-        } else {
-            alert("Esperando obtener tu ubicación...");
-        }
-    };
-    
-    initMap();
-    initGeolocation();
-    setInterval(() => {
-        if (currentMapCenter) {
-            const zoom = map.getZoom();
-            refreshAircraftAt(currentMapCenter.lat, currentMapCenter.lon, zoom);
-        }
-    }, 10000);
-    setInterval(() => weatherCache.clear(), 600000);
-</script>
+        
+        // Cierra el panel al hacer clic en CUALQUIER lugar de la ventana
+        document.addEventListener('click', function(e) {
+            const panel = document.getElementById('controlPanel');
+            if (panel.classList.contains('visible')) {
+                closePanel();
+            }
+        });
+        
+        // Botón de centrar ubicación (siempre visible)
+        document.getElementById('locateBtn').onclick = async () => {
+            if (userLocation) {
+                map.setView([userLocation.lat, userLocation.lon], 9);
+                const zoom = map.getZoom();
+                currentMapCenter = { lat: userLocation.lat, lon: userLocation.lon };
+                await refreshAircraftAt(userLocation.lat, userLocation.lon, zoom);
+            } else {
+                alert("Esperando obtener tu ubicación...");
+            }
+        };
+        
+        // ================= ARRANQUE DE LA APLICACIÓN =================
+        initMap();          // crea el mapa
+        initGeolocation();  // inicia el GPS
+        
+        // Actualización periódica cada 10 segundos (mantiene los datos frescos)
+        setInterval(() => {
+            if (currentMapCenter) {
+                const zoom = map.getZoom();
+                refreshAircraftAt(currentMapCenter.lat, currentMapCenter.lon, zoom);
+            }
+        }, 10000);
+        
+        // Limpiar caché meteorológico cada 10 minutos para evitar memoria infinita
+        setInterval(() => weatherCache.clear(), 600000);
+    </script>
 </body>
 </html>
